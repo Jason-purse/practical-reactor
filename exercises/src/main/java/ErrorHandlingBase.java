@@ -25,6 +25,8 @@ public class ErrorHandlingBase {
                            Flux.just("keep-alive"),
                            Flux.just("keep-alive"),
                            Flux.never())
+
+                // 延迟元素
                    .delayElements(Duration.ofSeconds(1))
                    .doOnNext(n -> System.out.println("Service: " + n));
     }

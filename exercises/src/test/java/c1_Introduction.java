@@ -1,15 +1,18 @@
 import org.junit.jupiter.api.*;
+import reactor.core.Disposable;
+import reactor.core.Exceptions;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
 
-import java.util.Arrays;
-import java.util.List;
-import java.util.Optional;
+import java.time.Duration;
+import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static java.util.Collections.emptyList;
 import static org.junit.jupiter.api.Assertions.*;
+import static reactor.core.publisher.Flux.just;
 
 /**
  * This chapter will introduce you to the basics of Reactor.
@@ -41,7 +44,8 @@ public class c1_Introduction extends IntroductionBase {
     public void hello_world() {
         Mono<String> serviceResult = hello_world_service();
 
-        String result = null; //todo: change this line only
+
+        String result = serviceResult.block();
 
         assertEquals("Hello World!", result);
     }
@@ -55,7 +59,7 @@ public class c1_Introduction extends IntroductionBase {
         Exception exception = assertThrows(IllegalStateException.class, () -> {
             Mono<String> serviceResult = unresponsiveService();
 
-            String result = null; //todo: change this line only
+            String result = serviceResult.block(Duration.ofSeconds(1));
         });
 
         String expectedMessage = "Timeout on blocking read for 1";
@@ -71,9 +75,7 @@ public class c1_Introduction extends IntroductionBase {
     @Test
     public void empty_service() {
         Mono<String> serviceResult = emptyService();
-
-        Optional<String> optionalServiceResult = null; //todo: change this line only
-
+        Optional<String> optionalServiceResult = serviceResult.blockOptional();
         assertTrue(optionalServiceResult.isEmpty());
         assertTrue(emptyServiceIsCalled.get());
     }
@@ -89,7 +91,7 @@ public class c1_Introduction extends IntroductionBase {
     public void multi_result_service() {
         Flux<String> serviceResult = multiResultService();
 
-        String result = serviceResult.toString(); //todo: change this line only
+        String result = serviceResult.blockFirst();
 
         assertEquals("valid result", result);
     }
@@ -103,7 +105,7 @@ public class c1_Introduction extends IntroductionBase {
     public void fortune_top_five() {
         Flux<String> serviceResult = fortuneTop5();
 
-        List<String> results = emptyList(); //todo: change this line only
+        List<String> results = serviceResult.take(5).collectList().block();
 
         assertEquals(Arrays.asList("Walmart", "Amazon", "Apple", "CVS Health", "UnitedHealth Group"), results);
         assertTrue(fortuneTop5ServiceIsCalled.get());
@@ -127,11 +129,14 @@ public class c1_Introduction extends IntroductionBase {
         Flux<String> serviceResult = fortuneTop5();
 
         serviceResult
-                .doOnNext(companyList::add)
-        //todo: add an operator here, don't use any blocking operator!
-        ;
-
-        Thread.sleep(1000); //bonus: can you explain why this line is needed?
+                .doOnNext((ele) -> {
+                    companyList.add(ele);
+                    System.out.println("增加");
+                })
+                // 订阅
+                .subscribe();
+//        System.out.println("订阅");
+//        Thread.sleep(1000); //bonus: can you explain why this line is needed?
 
         assertEquals(Arrays.asList("Walmart", "Amazon", "Apple", "CVS Health", "UnitedHealth Group"), companyList);
     }
@@ -152,12 +157,39 @@ public class c1_Introduction extends IntroductionBase {
         CopyOnWriteArrayList<String> companyList = new CopyOnWriteArrayList<>();
 
         fortuneTop5()
-        //todo: change this line only
+//                .doOnNext(companyList::add)
+//                .doOnComplete(() -> serviceCallCompleted.set(Boolean.TRUE))
+//                .subscribe();
+                .subscribe(companyList::add,e->{},()->serviceCallCompleted.set(true));
         ;
 
         Thread.sleep(1000);
 
         assertTrue(serviceCallCompleted.get());
         assertEquals(Arrays.asList("Walmart", "Amazon", "Apple", "CVS Health", "UnitedHealth Group"), companyList);
+
+        // 它仅仅是对异常做nothing ..
+        Disposable subscribe = Flux.defer(() -> {
+                    throw new RuntimeException();
+                })
+                .subscribe(System.out::println, e -> {
+                });
+
+        System.out.println("清理状态" + subscribe.isDisposed());
+
+        System.out.println("阻塞式代码捕捉异常");
+
+        // 下面会有日志记录(这是真的没有对异常进行处理)
+        subscribe = Flux.defer(() -> {
+                    System.out.println("thread id " + Thread.currentThread().getName());
+                    throw Exceptions.propagate(new RuntimeException());
+                })
+                .subscribe(System.out::println);
+
+        System.out.println("清理状态" + subscribe.isDisposed());
+
+
+        System.out.println("over");
+
     }
 }

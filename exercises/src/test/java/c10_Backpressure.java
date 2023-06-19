@@ -18,9 +18,9 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * Backpressure is a mechanism that allows a consumer to signal to a producer that it is ready receive data.
  * This is important because the producer may be sending data faster than the consumer can process it, and can overwhelm consumer.
- *
+ * <p>
  * Read first:
- *
+ * <p>
  * https://projectreactor.io/docs/core/release/reference/#reactive.backpressure
  * https://projectreactor.io/docs/core/release/reference/#_on_backpressure_and_ways_to_reshape_requests
  * https://projectreactor.io/docs/core/release/reference/#_operators_that_change_the_demand_from_downstream
@@ -28,9 +28,9 @@ import java.util.concurrent.atomic.AtomicReference;
  * https://projectreactor.io/docs/core/release/reference/#_asynchronous_but_single_threaded_push
  * https://projectreactor.io/docs/core/release/reference/#_a_hybrid_pushpull_model
  * https://projectreactor.io/docs/core/release/reference/#_an_alternative_to_lambdas_basesubscriber
- *
+ * <p>
  * Useful documentation:
- *
+ * <p>
  * https://projectreactor.io/docs/core/release/reference/#which-operator
  * https://projectreactor.io/docs/core/release/api/reactor/core/publisher/Mono.html
  * https://projectreactor.io/docs/core/release/api/reactor/core/publisher/Flux.html
@@ -47,18 +47,18 @@ public class c10_Backpressure extends BackpressureBase {
     public void request_and_demand() {
         CopyOnWriteArrayList<Long> requests = new CopyOnWriteArrayList<>();
         Flux<String> messageStream = messageStream1()
-                //todo: change this line only
-                ;
+                .doOnRequest(requests::add);
 
+        // 这种操作 ...
         StepVerifier.create(messageStream, StepVerifierOptions.create().initialRequest(0))
-                    .expectSubscription()
-                    .thenRequest(1)
-                    .then(() -> pub1.next("msg#1"))
-                    .thenRequest(3)
-                    .then(() -> pub1.next("msg#2", "msg#3"))
-                    .then(pub1::complete)
-                    .expectNext("msg#1", "msg#2", "msg#3")
-                    .verifyComplete();
+                .expectSubscription()
+                .thenRequest(1)
+                .then(() -> pub1.next("msg#1"))
+                .thenRequest(3)
+                .then(() -> pub1.next("msg#2", "msg#3"))
+                .then(pub1::complete)
+                .expectNext("msg#1", "msg#2", "msg#3")
+                .verifyComplete();
 
         Assertions.assertEquals(List.of(1L, 3L), requests);
     }
@@ -71,18 +71,23 @@ public class c10_Backpressure extends BackpressureBase {
     public void limited_demand() {
         CopyOnWriteArrayList<Long> requests = new CopyOnWriteArrayList<>();
         Flux<String> messageStream = messageStream2()
-                //todo: do your changes here
-                ;
+                .doOnRequest(requests::add)
+                .limitRate(1);
 
         StepVerifier.create(messageStream, StepVerifierOptions.create().initialRequest(0))
-                    .expectSubscription()
-                    .thenRequest(1)
-                    .then(() -> pub2.next("msg#1"))
-                    .thenRequest(3)
-                    .then(() -> pub2.next("msg#2", "msg#3"))
-                    .then(pub2::complete)
-                    .expectNext("msg#1", "msg#2", "msg#3")
-                    .verifyComplete();
+                .expectSubscription()
+                // 第一次 1(pull)
+                .thenRequest(1)
+                .then(() -> pub2.next("msg#1"))
+                // 然后请求三次,然后通过 75%的对于总频率的计算 1 * .075 约等于 1
+                // 的尝试再次向上游请求一个（然后由于我们的缓冲区容量频率限制为 1)
+                // 所以只要消费1个,预抓取一个 ..
+                // 也就是下游虽然请求3个,除了第一次拉1,之外后续依旧是 1
+                .thenRequest(3)
+                .then(() -> pub2.next("msg#2", "msg#3"))
+                .then(pub2::complete)
+                .expectNext("msg#1", "msg#2", "msg#3")
+                .verifyComplete();
 
         Assertions.assertEquals(List.of(1L, 1L, 1L, 1L), requests);
     }
@@ -94,19 +99,32 @@ public class c10_Backpressure extends BackpressureBase {
     @Test
     public void uuid_generator() {
         Flux<UUID> uuidGenerator = Flux.create(sink -> {
-            //todo: do your changes here
+//            while(!sink.isCancelled()) {
+//                // 尝试判断 ..
+//                long l = sink.requestedFromDownstream();
+//                if(l > 0) {
+//                    for (long i = 0; i < l; i++) {
+//                        sink.next(UUID.randomUUID());
+//                    }
+//                }
+//            }
+            sink.onRequest(n -> {
+                for (long i = 0; i < n; i++) {
+                    sink.next(UUID.randomUUID());
+                }
+            });
         });
 
         StepVerifier.create(uuidGenerator
-                                    .doOnNext(System.out::println)
-                                    .timeout(Duration.ofSeconds(1))
-                                    .onErrorResume(TimeoutException.class, e -> Flux.empty()),
-                            StepVerifierOptions.create().initialRequest(0))
-                    .expectSubscription()
-                    .thenRequest(10)
-                    .expectNextCount(10)
-                    .thenCancel()
-                    .verify();
+                                .doOnNext(System.out::println)
+                                .timeout(Duration.ofSeconds(1))
+                                .onErrorResume(TimeoutException.class, e -> Flux.empty()),
+                        StepVerifierOptions.create().initialRequest(0))
+                .expectSubscription()
+                .thenRequest(10)
+                .expectNextCount(10)
+                .thenCancel()
+                .verify();
     }
 
     /**
@@ -116,17 +134,17 @@ public class c10_Backpressure extends BackpressureBase {
     @Test
     public void pressure_is_too_much() {
         Flux<String> messageStream = messageStream3()
-                //todo: change this line only
-                ;
+                .onBackpressureError();
 
         StepVerifier.create(messageStream, StepVerifierOptions.create()
-                                                              .initialRequest(0))
-                    .expectSubscription()
-                    .thenRequest(3)
-                    .then(() -> pub3.next("A", "B", "C", "D"))
-                    .expectNext("A", "B", "C")
-                    .expectErrorMatches(Exceptions::isOverflow)
-                    .verify();
+                        .initialRequest(0))
+                .expectSubscription()
+                .thenRequest(3)
+                .then(() -> pub3.next("A", "B", "C", "D"))
+                .expectNext("A", "B", "C")
+                // 这里不关心反压 .. 所以 抛出了一个overflow ..
+                .expectErrorMatches(Exceptions::isOverflow)
+                .verify();
     }
 
     /**
@@ -137,20 +155,21 @@ public class c10_Backpressure extends BackpressureBase {
     @Test
     public void u_wont_brake_me() {
         Flux<String> messageStream = messageStream4()
-                //todo: change this line only
-                ;
+                .onBackpressureBuffer();
 
+        // 可以这样调试
+        // 先给出验证器选项 初始化请求为 0
         StepVerifier.create(messageStream, StepVerifierOptions.create()
-                                                              .initialRequest(0))
-                    .expectSubscription()
-                    .thenRequest(3)
-                    .then(() -> pub4.next("A", "B", "C", "D"))
-                    .expectNext("A", "B", "C")
-                    .then(() -> pub4.complete())
-                    .thenAwait()
-                    .thenRequest(1)
-                    .expectNext("D")
-                    .verifyComplete();
+                        .initialRequest(0))
+                .expectSubscription()
+                .thenRequest(3)
+                .then(() -> pub4.next("A", "B", "C", "D"))
+                .expectNext("A", "B", "C")
+                .then(() -> pub4.complete())
+                .thenAwait()
+                .thenRequest(1)
+                .expectNext("D")
+                .verifyComplete();
     }
 
     /**
@@ -167,19 +186,26 @@ public class c10_Backpressure extends BackpressureBase {
         AtomicInteger count = new AtomicInteger(0);
         AtomicReference<Subscription> sub = new AtomicReference<>();
 
+        // 这里的生产者自然关心消费者反压
         remoteMessageProducer()
                 .doOnCancel(() -> lockRef.get().countDown())
                 .subscribeWith(new BaseSubscriber<String>() {
-                    //todo: do your changes only within BaseSubscriber class implementation
+
                     @Override
                     protected void hookOnSubscribe(Subscription subscription) {
                         sub.set(subscription);
+                        subscription.request(10);
                     }
 
                     @Override
                     protected void hookOnNext(String s) {
                         System.out.println(s);
                         count.incrementAndGet();
+
+                        if (count.compareAndSet(10, 10)) {
+                            // 取消
+                            cancel();
+                        }
                     }
                     //-----------------------------------------------------
                 });

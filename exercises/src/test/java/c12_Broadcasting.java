@@ -2,6 +2,7 @@ import org.junit.jupiter.api.*;
 import reactor.core.publisher.Flux;
 import reactor.test.StepVerifier;
 
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -32,8 +33,7 @@ public class c12_Broadcasting extends BroadcastingBase {
     @Test
     public void sharing_is_caring() throws InterruptedException {
         Flux<Message> messages = messageStream()
-                //todo: do your changes here
-                ;
+                .share();
 
         //don't change code below
         Flux<String> userStream = messages.map(m -> m.user);
@@ -59,9 +59,12 @@ public class c12_Broadcasting extends BroadcastingBase {
      */
     @Test
     public void hot_vs_cold() {
-        Flux<String> updates = systemUpdates()
-                //todo: do your changes here
-                ;
+
+        // 这是一种,通过在达到多个订阅之后 然后连接到上游,但是低于这个订阅的时候 取消订阅到上游,但是在2秒中之内 保持上游不关闭 ..
+        // 如果没有周期 默认是直接关闭(关闭连接), 一旦关闭连接,publish操作符的使命(转换为热流)就结束了 ..
+        // 此时 再次订阅将导致一个冷流的过程继续发生 ...
+//        Flux<String> updates = systemUpdates().publish().refCount(1, Duration.ofSeconds(2));
+        Flux<String> updates = systemUpdates().publish().autoConnect(1);
 
         //subscriber 1
         StepVerifier.create(updates.take(3).doOnNext(n -> System.out.println("subscriber 1 got: " + n)))
@@ -82,8 +85,14 @@ public class c12_Broadcasting extends BroadcastingBase {
     @Test
     public void history_lesson() {
         Flux<String> updates = systemUpdates()
-                //todo: do your changes here
-                ;
+                // shared
+//                .share()
+                // 回放是可以的 ..
+//                .replay()
+//                .autoConnect(1)
+
+                // 三种方式都可以 ..
+                .cache();
 
         //subscriber 1
         StepVerifier.create(updates.take(3).doOnNext(n -> System.out.println("subscriber 1 got: " + n)))
